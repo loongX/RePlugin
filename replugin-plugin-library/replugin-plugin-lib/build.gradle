@@ -16,6 +16,9 @@
 
 apply plugin: 'com.android.library'
 
+version = "2.2.1"
+group = 'com.qihoo360.replugin'  // 组名
+
 android {
     compileSdkVersion 25
     buildToolsVersion '25.0.2'

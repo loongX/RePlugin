@@ -16,6 +16,7 @@
 
 package com.qihoo360.replugin;
 
+import android.app.Activity;
 import android.app.Application;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -26,15 +27,20 @@ import android.content.pm.PackageInfo;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.support.v4.content.LocalBroadcastManager;
 import android.text.TextUtils;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
 
 import com.qihoo360.i.Factory;
 import com.qihoo360.i.Factory2;
 import com.qihoo360.i.IPluginManager;
 import com.qihoo360.loader2.CertUtils;
+import com.qihoo360.loader2.DumpUtils;
 import com.qihoo360.loader2.MP;
 import com.qihoo360.loader2.PMF;
 import com.qihoo360.loader2.PluginStatusController;
@@ -45,8 +51,8 @@ import com.qihoo360.mobilesafe.svcmanager.QihooServiceManager;
 import com.qihoo360.replugin.base.IPC;
 import com.qihoo360.replugin.component.ComponentList;
 import com.qihoo360.replugin.component.app.PluginApplicationClient;
-import com.qihoo360.replugin.helper.HostConfigHelper;
 import com.qihoo360.replugin.debugger.DebuggerReceivers;
+import com.qihoo360.replugin.helper.HostConfigHelper;
 import com.qihoo360.replugin.helper.LogDebug;
 import com.qihoo360.replugin.helper.LogRelease;
 import com.qihoo360.replugin.model.PluginInfo;
@@ -57,6 +63,8 @@ import com.qihoo360.replugin.packages.PluginRunningList;
 import com.qihoo360.replugin.packages.RePluginInstaller;
 
 import java.io.File;
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 import java.util.List;
 
 import static com.qihoo360.replugin.helper.LogDebug.LOG;
@@ -95,11 +103,12 @@ public class RePlugin {
     private static RePluginConfig sConfig;
 
     /**
-     * 安装此插件 <p>
+     * 安装或升级此插件 <p>
      * 注意： <p>
      * 1、这里只将APK移动（或复制）到“插件路径”下，不释放优化后的Dex和Native库，不会加载插件 <p>
      * 2、支持“纯APK”和“p-n”（旧版，即将废弃）插件 <p>
-     * 3、此方法是【同步】的，耗时较少
+     * 3、此方法是【同步】的，耗时较少 <p>
+     * 4、不会触发插件“启动”逻辑，因此只要插件“当前没有被使用”，再次调用此方法则新插件立即生效
      *
      * @param path 插件安装的地址。必须是“绝对路径”。通常可以用context.getFilesDir()来做
      * @return 安装成功的插件信息，外界可直接读取
@@ -141,7 +150,8 @@ public class RePlugin {
     /**
      * 卸载此插件 <p>
      * 注意： <p>
-     * 此卸载功能只针对"纯APK"插件方案 <p>
+     * 1、此卸载功能只针对"纯APK"插件方案 <p>
+     * 2、若插件正在运行，则直到下次重启进程后才生效
      *
      * @param pluginName 待卸载插件名字
      * @return 插件卸载是否成功
@@ -181,7 +191,8 @@ public class RePlugin {
      * 注意： <p>
      * 1、该方法非必须调用（见“使用场景”）。换言之，只要涉及到插件加载，就会自动完成preload操作，无需开发者关心 <p>
      * 2、Dex和Native库会占用大量的“内部存储空间”。故除非插件是“确定要用的”，否则不必在安装完成后立即调用此方法 <p>
-     * 3、该方法为【同步】调用，且耗时较久（尤其是dex2oat的过程），建议在线程中使用
+     * 3、该方法为【同步】调用，且耗时较久（尤其是dex2oat的过程），建议在线程中使用 <p>
+     * 4、调用后将“启动”此插件，若再次升级，则必须重启进程后才生效
      *
      * @param pi 要加载的插件信息
      * @return 预加载是否成功
@@ -252,6 +263,33 @@ public class RePlugin {
     }
 
     /**
+     * 通过 forResult 方式启动一个插件的 Activity
+     *
+     * @param activity    源 Activity
+     * @param intent      要打开 Activity 的 Intent，其中 ComponentName 的 Key 必须为插件名
+     * @param requestCode 请求码
+     * @see #startActivityForResult(Activity, Intent, int, Bundle)
+     * @since 2.1.3
+     */
+    public static boolean startActivityForResult(Activity activity, Intent intent, int requestCode) {
+        return Factory.startActivityForResult(activity, intent, requestCode, null);
+    }
+
+    /**
+     * 通过 forResult 方式启动一个插件的 Activity
+     *
+     * @param activity    源 Activity
+     * @param intent      要打开 Activity 的 Intent，其中 ComponentName 的 Key 必须为插件名
+     * @param requestCode 请求码
+     * @param options     附加的数据
+     * @see #startActivityForResult(Activity, Intent, int, Bundle)
+     * @since 2.1.3
+     */
+    public static boolean startActivityForResult(Activity activity, Intent intent, int requestCode, Bundle options) {
+        return Factory.startActivityForResult(activity, intent, requestCode, options);
+    }
+
+    /**
      * 创建一个用来定向到插件组件的Intent <p>
      * <p>
      * 推荐用法： <p>
@@ -315,12 +353,12 @@ public class RePlugin {
     }
 
     /**
-     * 获取SDK的版本信息
+     * 获取当前版本
      *
-     * @return SDK的版本，如2.0.0等
+     * @return 版本号，如2.0.0等
      * @since 2.0.0
      */
-    public static String getSDKVersion() {
+    public static String getVersion() {
         return BuildConfig.VERSION_NAME;
     }
 
@@ -442,6 +480,82 @@ public class RePlugin {
      */
     public static String fetchPluginNameByClassLoader(ClassLoader cl) {
         return Factory.fetchPluginName(cl);
+    }
+
+    /**
+     * 通过资源名（包括前缀和具体名字），来获取指定插件里的资源的ID
+     * <p>
+     * 性能消耗：等同于 fetchResources
+     *
+     * @param pluginName     插件名
+     * @param resTypeAndName 要获取的“资源类型+资源名”，格式为：“[type]/[name]”。例如： <p>
+     *                       → layout/common_title → 从“布局”里获取common_title的ID <p>
+     *                       → drawable/common_bg → 从“可绘制图片”里获取common_bg的ID <p>
+     *                       详细见Android官方的说明
+     * @return 资源的ID。若为0，则表示资源没有找到，无法使用
+     * @since 2.2.0
+     */
+    public static int fetchResourceIdByName(String pluginName, String resTypeAndName) {
+        PackageInfo pi = fetchPackageInfo(pluginName);
+        if (pi == null) {
+            // 插件没有找到
+            if (LogDebug.LOG) {
+                LogDebug.e(TAG, "fetchResourceIdByName: Plugin not found. pn=" + pluginName + "; resName=" + resTypeAndName);
+            }
+            return 0;
+        }
+        Resources res = fetchResources(pluginName);
+        if (res == null) {
+            // 不太可能出现此问题，同样为插件没有找到
+            if (LogDebug.LOG) {
+                LogDebug.e(TAG, "fetchResourceIdByName: Plugin not found (fetchResources). pn=" + pluginName + "; resName=" + resTypeAndName);
+            }
+            return 0;
+        }
+
+        // Identifier的第一个参数想要的是：
+        // [包名]:[类型名]/[资源名]。其中[类型名]/[资源名]就是 resTypeAndName 参数
+        // 例如：com.qihoo360.replugin.sample.demo2:layout/from_demo1
+        String idKey = pi.packageName + ":" + resTypeAndName;
+        return res.getIdentifier(idKey, null, null);
+    }
+
+    /**
+     * 通过Layout名，来获取插件内的View，并自动做“强制类型转换”（也可直接使用View类型） <p>
+     * 注意：若使用的是公共库，则务必按照Provided的形式引入，否则会出现“不同ClassLoader”导致的ClassCastException <p>
+     * 当然，非公共库不受影响，但请务必使用Android Framework内的View（例如WebView、ViewGroup等），或索性直接使用View
+     *
+     * @param pluginName 插件名
+     * @param layoutName Layout名字
+     * @param root Optional view to be the parent of the generated hierarchy.
+     * @return 插件的View。若为Null则表示获取失败
+     * @throws ClassCastException 若不是想要的那个View类型，或者ClassLoader不同，则可能会出现此异常。应确保View类型正确
+     * @since 2.2.0
+     */
+    public static <T extends View> T fetchViewByLayoutName(String pluginName, String layoutName, ViewGroup root) {
+        Context context = fetchContext(pluginName);
+        if (context == null) {
+            // 插件没有找到
+            if (LogDebug.LOG) {
+                LogDebug.e(TAG, "fetchViewByLayoutName: Plugin not found. pn=" + pluginName + "; layoutName=" + layoutName);
+            }
+        }
+
+        String resTypeAndName = "layout/" + layoutName;
+        int id = fetchResourceIdByName(pluginName, resTypeAndName);
+        if (id <= 0) {
+            // 无法拿到资源，可能是资源没有找到
+            if (LogDebug.LOG) {
+                LogDebug.e(TAG, "fetchViewByLayoutName: fetch failed! pn=" + pluginName + "; layoutName=" + layoutName);
+            }
+            return null;
+        }
+
+        // TODO 可能要考虑WebView在API 19以上的特殊性
+
+        // 强制转换到T类型，一旦转换出错就抛出ClassCastException异常并告诉外界
+        // noinspection unchecked
+        return (T) LayoutInflater.from(context).inflate(id, root);
     }
 
     /**
@@ -699,9 +813,9 @@ public class RePlugin {
 
     /**
      * 注册一个“跳转”类。一旦系统或自身想调用指定类时，将自动跳转到插件里的另一个类。 <p>
-     * 例如，系统想访问CallShowService类，但此类在宿主中不存在，只在CallShow中有，则： <p>
+     * 例如，系统想访问CallShowService类，但此类在宿主中不存在，只在callshow插件中有，则： <p>
      * 未注册“跳转类”时：直接到宿主中寻找CallShowService类，找到后就加载，找不到就崩溃（若不Catch） <p>
-     * 注册“挑转类”后，直接将CallShowService的调用“跳转到”插件的CallShowService类中（名字可以不同）。这种情况下，需要调用： <p>
+     * 注册“挑转类”后，直接将CallShowService的调用“跳转到”callshow插件的CallShowService2类中（名字可以不同）。这种情况下，需要调用： <p>
      * <code>
      * RePlugin.registerHookingClass("com.qihoo360.mobilesafe.CallShowService", <p>
      * 　　　　　　　　　　　　RePlugin.createComponentName("callshow", "com.qihoo360.callshow.CallShowService2"), <p>
@@ -747,6 +861,18 @@ public class RePlugin {
     }
 
     /**
+     * 取消对某个“跳转”类的注册，恢复原状。<p>
+     * 请参见 registerHookingClass 的详细说明
+     *
+     * @param source   要替换的类的全名
+     * @see #registerHookingClass(String, ComponentName, Class)
+     * @since 2.1.6
+     */
+    public static void unregisterHookingClass(String source) {
+        Factory2.unregisterDynamicClass(source);
+    }
+
+    /**
      * 支持将APK转化成p-n-开头的插件（已经在360手机卫士80+个插件验证通过的方案），放入files目录，并返回其路径 <p>
      * 注：由于目前卫士绝大多数插件还是p-n开头的，"纯APK"方案还没有经过大量测试，故这里将加入此接口。 <p>
      * 具体做法： <p>
@@ -766,6 +892,17 @@ public class RePlugin {
             return f.getAbsolutePath();
         }
         return null;
+    }
+
+    /**
+     * dump RePlugin框架运行时的详细信息，包括：Activity 坑位映射表，正在运行的 Service，以及详细的插件信息
+     *
+     * @param fd
+     * @param writer
+     * @param args
+     */
+    public static void dump(FileDescriptor fd, PrintWriter writer, String[] args) {
+        DumpUtils.dump(fd, writer, args);
     }
 
     /**

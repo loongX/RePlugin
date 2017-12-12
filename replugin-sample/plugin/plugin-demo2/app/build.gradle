@@ -22,15 +22,16 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 21
+    compileSdkVersion 25
     buildToolsVersion '25.0.0'
 
     defaultConfig {
-        versionName "1.0"
-        versionCode 100
+        versionName "1.1"
+        versionCode 104
         targetSdkVersion 21
         applicationId "com.qihoo360.replugin.sample.demo2"
         minSdkVersion 15
+        multiDexEnabled false
     }
 
     buildTypes {
@@ -56,8 +57,18 @@ android {
 
 // 这个plugin需要放在android配置之后，因为需要读取android中的配置项
 apply plugin: 'replugin-plugin-gradle'
+repluginPluginConfig {
+    pluginName = "demo2"
+    hostApplicationId = "com.qihoo360.replugin.sample.host"
+    hostAppLauncherActivity = "com.qihoo360.replugin.sample.host.MainActivity"
+}
 
 dependencies {
     compile fileTree(include: ['*.jar'], dir: 'libs')
-    compile 'com.qihoo360.replugin:replugin-plugin-lib:2.1.0'
+    compile 'com.android.support:appcompat-v7:25.3.1'
+    compile 'com.qihoo360.replugin:replugin-plugin-lib:2.2.1'
+}
+
+if (android.defaultConfig.multiDexEnabled) {
+    apply from: 'case.gradle'
 }

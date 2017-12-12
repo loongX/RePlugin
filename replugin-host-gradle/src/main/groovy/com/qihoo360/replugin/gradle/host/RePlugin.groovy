@@ -34,7 +34,6 @@ public class Replugin implements Plugin<Project> {
     def static TAG = AppConstant.TAG
     def project
     def config
-    def newManifest
 
     @Override
     public void apply(Project project) {
@@ -54,17 +53,17 @@ public class Replugin implements Plugin<Project> {
 
                 if (config == null) {
                     config = project.extensions.getByName(AppConstant.USER_CONFIG)
-                    def appID = variant.generateBuildConfig.appPackageName
-                    checkUserConfig(config, appID)
-                    newManifest = ComponentsGenerator.generateComponent(appID, config)
+                    checkUserConfig(config)
                 }
 
+                def appID = variant.generateBuildConfig.appPackageName
+                def newManifest = ComponentsGenerator.generateComponent(appID, config)
 
                 def variantData = variant.variantData
                 def scope = variantData.scope
 
                 //host generate task
-                def generateHostConfigTaskName = scope.getTaskName("rpGenerate", "HostConfig")
+                def generateHostConfigTaskName = scope.getTaskName(AppConstant.TASK_GENERATE, "HostConfig")
                 def generateHostConfigTask = project.task(generateHostConfigTaskName)
 
                 generateHostConfigTask.doLast {
@@ -81,7 +80,7 @@ public class Replugin implements Plugin<Project> {
                 }
 
                 //json generate task
-                def generateBuiltinJsonTaskName = scope.getTaskName("rpGenerate", "BuiltinJson")
+                def generateBuiltinJsonTaskName = scope.getTaskName(AppConstant.TASK_GENERATE, "BuiltinJson")
                 def generateBuiltinJsonTask = project.task(generateBuiltinJsonTaskName)
 
                 generateBuiltinJsonTask.doLast {
@@ -99,9 +98,27 @@ public class Replugin implements Plugin<Project> {
 
                 variant.outputs.each { output ->
                     output.processManifest.doLast {
-                        def manifestPath = output.processManifest.outputFile.absolutePath
-                        def updatedContent = new File(manifestPath).getText("UTF-8").replaceAll("</application>", newManifest + "</application>")
-                        new File(manifestPath).write(updatedContent, 'UTF-8')
+                        output.processManifest.outputs.files.each { File file ->
+                            def manifestFile = null;
+                            //在gradle plugin 3.0.0之前，file是文件，且文件名为AndroidManifest.xml
+                            //在gradle plugin 3.0.0之后，file是目录，且不包含AndroidManifest.xml，需要自己拼接
+                            //除了目录和AndroidManifest.xml之外，还可能会包含manifest-merger-debug-report.txt等不相干的文件，过滤它
+                            if ((file.name.equalsIgnoreCase("AndroidManifest.xml") && !file.isDirectory()) || file.isDirectory()) {
+                                if (file.isDirectory()) {
+                                    //3.0.0之后，自己拼接AndroidManifest.xml
+                                    manifestFile = new File(file, "AndroidManifest.xml")
+                                } else {
+                                    //3.0.0之前，直接使用
+                                    manifestFile = file
+                                }
+                                //检测文件是否存在
+                                if (manifestFile != null && manifestFile.exists()) {
+                                    println "${AppConstant.TAG} handle manifest: ${manifestFile}"
+                                    def updatedContent = manifestFile.getText("UTF-8").replaceAll("</application>", newManifest + "</application>")
+                                    manifestFile.write(updatedContent, 'UTF-8')
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -149,7 +166,7 @@ public class Replugin implements Plugin<Project> {
     /**
      * 检查用户配置项
      */
-    def checkUserConfig(config, appID) {
+    def checkUserConfig(config) {
 /*
         def persistentName = config.persistentName
 
@@ -173,7 +190,7 @@ public class Replugin implements Plugin<Project> {
         doCheckConfig("countTask", config.countTask)
 
         println '--------------------------------------------------------------------------'
-        println "${TAG} appID=${appID}"
+//        println "${TAG} appID=${appID}"
         println "${TAG} useAppCompat=${config.useAppCompat}"
         // println "${TAG} persistentName=${config.persistentName}"
         println "${TAG} countProcess=${config.countProcess}"
@@ -209,50 +226,53 @@ public class Replugin implements Plugin<Project> {
 class RepluginConfig {
 
     /** 自定义进程的数量(除 UI 和 Persistent 进程) */
-    def static countProcess = 3
+    def countProcess = 3
 
-    /** 常驻进程名称（暂未使用）*/
-    def static persistentName = ':GuardService'
+    /** 是否使用常驻进程？ */
+    def persistentEnable = true
+
+    /** 常驻进程名称（也就是上面说的 Persistent 进程，开发者可自定义）*/
+    def persistentName = ':GuardService'
 
     /** 背景不透明的坑的数量 */
-    def static countNotTranslucentStandard = 6
-    def static countNotTranslucentSingleTop = 2
-    def static countNotTranslucentSingleTask = 3
-    def static countNotTranslucentSingleInstance = 2
+    def countNotTranslucentStandard = 6
+    def countNotTranslucentSingleTop = 2
+    def countNotTranslucentSingleTask = 3
+    def countNotTranslucentSingleInstance = 2
 
-    /** 背景透明的坑的数量（每种 launchMode 相同） */
-    def static countTranslucentStandard = 2
-    def static countTranslucentSingleTop = 2
-    def static countTranslucentSingleTask = 2
-    def static countTranslucentSingleInstance = 2
+    /** 背景透明的坑的数量 */
+    def countTranslucentStandard = 2
+    def countTranslucentSingleTop = 2
+    def countTranslucentSingleTask = 2
+    def countTranslucentSingleInstance = 3
 
     /** 宿主中声明的 TaskAffinity 的组数 */
-    def static countTask = 2
+    def countTask = 2
 
     /**
      * 是否使用 AppCompat 库
      * com.android.support:appcompat-v7:25.2.0
      */
-    def static useAppCompat = false
+    def useAppCompat = false
 
-    // HOST 向下兼容的插件版本
-    def static compatibleVersion = 10
+    /** HOST 向下兼容的插件版本 */
+    def compatibleVersion = 10
 
-    // HOST 插件版本
-    def static currentVersion = 12
+    /** HOST 插件版本 */
+    def currentVersion = 12
 
     /** plugins-builtin.json 文件名自定义,默认是 "plugins-builtin.json" */
-    def static builtInJsonFileName = "plugins-builtin.json"
+    def builtInJsonFileName = "plugins-builtin.json"
 
     /** 是否自动管理 plugins-builtin.json 文件,默认自动管理 */
-    def static autoManageBuiltInJsonFile = true
+    def autoManageBuiltInJsonFile = true
 
     /** assert目录下放置插件文件的目录自定义,默认是 assert 的 "plugins" */
-    def static pluginDir = "plugins"
+    def pluginDir = "plugins"
 
     /** 插件文件的后缀自定义,默认是".jar" 暂时支持 jar 格式*/
-    def static pluginFilePostfix = ".jar"
+    def pluginFilePostfix = ".jar"
 
     /** 当发现插件目录下面有不合法的插件 jar (有可能是特殊定制 jar)时是否停止构建,默认是 true */
-    def static enablePluginFileIllegalStopBuild = true
+    def enablePluginFileIllegalStopBuild = true
 }

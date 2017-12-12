@@ -119,8 +119,8 @@ public class MP {
             LogDebug.d(PLUGIN_TAG, "MP.fetchPluginBinder ... plugin=" + plugin + " binder.name=" + binder);
         }
 
-        // 记录调用栈，便于观察：增加
-        if (LOG) {
+        // 若开启了“打印详情”则打印调用栈，便于观察
+        if (RePlugin.getConfig().isPrintDetailLog()) {
             String reason = "";
             StackTraceElement elements[] = Thread.currentThread().getStackTrace();
             for (StackTraceElement item : elements) {
@@ -272,7 +272,7 @@ public class MP {
         if (LOG) {
             LogDebug.d(PLUGIN_TAG, "MP.pluginUninstall ... pluginName=" + pluginName);
         }
-        PluginInfo pi = getPlugin(pluginName, false);
+        PluginInfo pi = getPlugin(pluginName, true);
 
         // 插件未安装
         if (pi == null) {
@@ -282,13 +282,11 @@ public class MP {
             return true;
         }
 
-        // 插件已安装
         try {
-            return PluginManagerProxy.uninstall(pi);
-        } catch (RemoteException e) {
-            e.printStackTrace();
-            if (LOG) {
-                e.printStackTrace();
+            return PluginProcessMain.getPluginHost().pluginUninstalled(pi);
+        } catch (Throwable e) {
+            if (LOGR) {
+                LogRelease.e(PLUGIN_TAG, "uninstall. error: " + e.getMessage(), e);
             }
         }
 
@@ -327,7 +325,11 @@ public class MP {
                 } else {
                     addTo = info;
                 }
-                array.add(addTo);
+
+                // 避免加了两次，毕竟包名和别名都会加进来
+                if (!array.contains(addTo)) {
+                    array.add(addTo);
+                }
             }
         }
         return array;

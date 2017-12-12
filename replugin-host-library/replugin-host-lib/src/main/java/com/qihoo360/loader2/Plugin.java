@@ -19,6 +19,7 @@ package com.qihoo360.loader2;
 import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.content.res.Resources;
+import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -27,8 +28,7 @@ import android.text.TextUtils;
 
 import com.qihoo360.i.IModule;
 import com.qihoo360.i.IPlugin;
-import com.qihoo360.i.IPluginManager;
-import com.qihoo360.loader.utils.AssetsUtils;
+import com.qihoo360.replugin.utils.AssetsUtils;
 import com.qihoo360.loader.utils.ProcessLocker;
 import com.qihoo360.mobilesafe.api.Tasks;
 import com.qihoo360.replugin.RePlugin;
@@ -38,9 +38,11 @@ import com.qihoo360.replugin.helper.LogDebug;
 import com.qihoo360.replugin.helper.LogRelease;
 import com.qihoo360.replugin.model.PluginInfo;
 import com.qihoo360.replugin.packages.PluginManagerProxy;
+import com.qihoo360.replugin.utils.FileUtils;
 
 import java.io.File;
 import java.io.FileDescriptor;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -133,7 +135,7 @@ class Plugin {
     /**
      *
      */
-    IPluginManager mPluginManager;
+    PluginCommImpl mPluginManager;
 
     /**
      *
@@ -179,7 +181,7 @@ class Plugin {
         return new Plugin(info);
     }
 
-    static final Plugin cloneAndReattach(Context c, Plugin p, ClassLoader parent, IPluginManager pm) {
+    static final Plugin cloneAndReattach(Context c, Plugin p, ClassLoader parent, PluginCommImpl pm) {
         if (p == null) {
             return null;
         }
@@ -381,7 +383,7 @@ class Plugin {
         return super.toString();
     }
 
-    final void attach(Context context, ClassLoader parent, IPluginManager manager) {
+    final void attach(Context context, ClassLoader parent, PluginCommImpl manager) {
         mContext = context;
         mParent = parent;
         mPluginManager = manager;
@@ -565,8 +567,8 @@ class Plugin {
         }
         mInitialized = true;
 
-        // 打印调用栈，便于观察
-        if (LOG) {
+        // 若开启了“打印详情”则打印调用栈，便于观察
+        if (RePlugin.getConfig().isPrintDetailLog()) {
             String reason = "";
             reason += "--- plugin: " + mInfo.getName() + " ---\n";
             reason += "load=" + load + "\n";
@@ -601,7 +603,7 @@ class Plugin {
 
         Context context = mContext;
         ClassLoader parent = mParent;
-        IPluginManager manager = mPluginManager;
+        PluginCommImpl manager = mPluginManager;
 
         //
         String logTag = "try1";
@@ -672,6 +674,17 @@ class Plugin {
             }
             odex.delete();
         }
+
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            // support for multidex below LOLLIPOP:delete Extra odex,if need
+            try {
+                FileUtils.forceDelete(mInfo.getExtraOdexDir());
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
         t1 = System.currentTimeMillis();
         rc = doLoad(logTag, context, parent, manager, load);
         if (LOG) {
@@ -722,7 +735,7 @@ class Plugin {
         return null;
     }
 
-    private final boolean doLoad(String tag, Context context, ClassLoader parent, IPluginManager manager, int load) {
+    private final boolean doLoad(String tag, Context context, ClassLoader parent, PluginCommImpl manager, int load) {
         if (mLoader == null) {
             // 试图释放文件
             PluginInfo info = null;
@@ -740,11 +753,11 @@ class Plugin {
                     return false;
                 }
                 File file = new File(dir, dstName);
-                info = PluginInfo.build(file);
-                if (info == null) {
-                    return false;
-                }
-                // 不会改变
+                info = (PluginInfo) mInfo.clone();
+                info.setPath(file.getPath());
+
+                // FIXME 不应该是P-N，即便目录相同，未来会优化这里
+                info.setType(PluginInfo.TYPE_PN_INSTALLED);
 
             } else if (mInfo.getType() == PluginInfo.TYPE_PN_JAR) {
                 //
@@ -839,7 +852,7 @@ class Plugin {
         }
     }
 
-    private boolean loadEntryLocked(IPluginManager manager) {
+    private boolean loadEntryLocked(PluginCommImpl manager) {
         if (mDummyPlugin) {
             if (LOGR) {
                 LogRelease.w(PLUGIN_TAG, "p.lel dm " + mInfo.getName());
@@ -897,11 +910,17 @@ class Plugin {
     private void callAppLocked() {
         // 获取并调用Application的几个核心方法
         if (!mDummyPlugin) {
-            // NOTE 不排除A的Application中调到了B，B又调回到A，这时需要isLoaded防止循环加载
+            // NOTE 不排除A的Application中调到了B，B又调回到A，或在同一插件内的onCreate开启Service/Activity，而内部逻辑又调用fetchContext并再次走到这里
+            // NOTE 因此需要对mApplicationClient做判断，确保永远只执行一次，无论是否成功
+            if (mApplicationClient != null) {
+                // 已经初始化过，无需再次处理
+                return;
+            }
+
             mApplicationClient = PluginApplicationClient.getOrCreate(
                     mInfo.getName(), mLoader.mClassLoader, mLoader.mComponents, mLoader.mPluginObj.mInfo);
 
-            if (mApplicationClient != null && !mApplicationClient.isLoaded()) {
+            if (mApplicationClient != null) {
                 mApplicationClient.callAttachBaseContext(mLoader.mPkgContext);
                 mApplicationClient.callOnCreate();
             }

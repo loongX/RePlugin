@@ -23,8 +23,8 @@ import com.qihoo360.loader2.Constant;
 import com.qihoo360.replugin.helper.JSONHelper;
 import com.qihoo360.replugin.helper.LogDebug;
 
-import com.qihoo360.replugin.ext.io.Charsets;
-import com.qihoo360.replugin.ext.io.FileUtils;
+import com.qihoo360.replugin.utils.Charsets;
+import com.qihoo360.replugin.utils.FileUtils;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -72,6 +72,20 @@ public class PluginInfoList implements Iterable<PluginInfo> {
             JSONObject jo = mJson.optJSONObject(i);
             if (TextUtils.equals(pn, jo.optString("name"))) {
                 JSONHelper.remove(mJson, i);
+            }
+        }
+        if (mMap.containsKey(pn)) {
+            mMap.remove(pn);
+        }
+        removeListElement(mList, pn);
+    }
+
+    private void removeListElement(List<PluginInfo> list, String pn) {
+        Iterator<PluginInfo> iterator = list.iterator();
+        while(iterator.hasNext()) {
+            PluginInfo pluginInfo = iterator.next();
+            if(TextUtils.equals(pn, pluginInfo.getName())) {
+                iterator.remove();
             }
         }
     }

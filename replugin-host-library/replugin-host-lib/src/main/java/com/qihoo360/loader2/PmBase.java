@@ -31,11 +31,8 @@ import android.text.TextUtils;
 
 import com.qihoo360.i.Factory;
 import com.qihoo360.i.IModule;
-import com.qihoo360.i.IPluginActivityManager;
 import com.qihoo360.i.IPluginManager;
-import com.qihoo360.loader.utils.ReflectUtils;
 import com.qihoo360.mobilesafe.api.Tasks;
-import com.qihoo360.mobilesafe.core.BuildConfig;
 import com.qihoo360.replugin.IHostBinderFetcher;
 import com.qihoo360.replugin.RePlugin;
 import com.qihoo360.replugin.RePluginConstants;
@@ -47,10 +44,12 @@ import com.qihoo360.replugin.component.dummy.DummyProvider;
 import com.qihoo360.replugin.component.dummy.DummyService;
 import com.qihoo360.replugin.component.process.PluginProcessHost;
 import com.qihoo360.replugin.component.service.server.PluginPitService;
+import com.qihoo360.replugin.helper.HostConfigHelper;
 import com.qihoo360.replugin.helper.LogDebug;
 import com.qihoo360.replugin.helper.LogRelease;
 import com.qihoo360.replugin.model.PluginInfo;
 import com.qihoo360.replugin.packages.PluginManagerProxy;
+import com.qihoo360.replugin.utils.ReflectUtils;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -161,12 +160,12 @@ class PmBase {
     /**
      *
      */
-    IPluginManager mLocal;
+    PluginCommImpl mLocal;
 
     /**
      *
      */
-    IPluginActivityManager mInternal;
+    PluginLibraryInternalProxy mInternal;
 
     /**
      * insertNewPlugin 时使用的线程锁
@@ -223,26 +222,36 @@ class PmBase {
         mClient = new PluginProcessPer(context, this, PluginManager.sPluginProcessIndex, mContainerActivities);
 
         //
-        mLocal = new PmLocalImpl(context, this);
+        mLocal = new PluginCommImpl(context, this);
 
         //
-        mInternal = new PmInternalImpl(this);
+        mInternal = new PluginLibraryInternalProxy(this);
     }
 
     void init() {
-        if (IPC.isPersistentProcess()) {
-            mHostSvc = new PmHostSvc(mContext, this);
-            PluginProcessMain.installHost(mHostSvc);
-            PluginProcessMain.schedulePluginProcessLoop(PluginProcessMain.CHECK_STAGE1_DELAY);
-
+        if (HostConfigHelper.PERSISTENT_ENABLE) {
+            // （默认）“常驻进程”作为插件管理进程，则常驻进程作为Server，其余进程作为Client
+            if (IPC.isPersistentProcess()) {
+                // 初始化“Server”所做工作
+                initForServer();
+            } else {
+                // 连接到Server
+                initForClient();
+            }
         } else {
-            PluginProcessMain.installHost();
-        }
+            // “UI进程”作为插件管理进程（唯一进程），则UI进程既可以作为Server也可以作为Client
+            if (IPC.isUIProcess()) {
+                // 1. 尝试初始化Server所做工作，
+                initForServer();
 
-        if (IPC.isPersistentProcess()) {
-            initForPersistent();
-        } else {
-            initForClient();
+                // 2. 注册该进程信息到“插件管理进程”中
+                // 注意：这里无需再做 initForClient，因为不需要再走一次Binder
+                PMF.sPluginMgr.attach();
+
+            } else {
+                // 其它进程？直接连接到Server即可
+                initForClient();
+            }
         }
 
         // 最新快照
@@ -260,10 +269,14 @@ class PmBase {
      * Persistent(常驻)进程的初始化
      *
      */
-    private final void initForPersistent() {
+    private final void initForServer() {
         if (LOG) {
             LogDebug.d(PLUGIN_TAG, "search plugins from file system");
         }
+
+        mHostSvc = new PmHostSvc(mContext, this);
+        PluginProcessMain.installHost(mHostSvc);
+        PluginProcessMain.schedulePluginProcessLoop(PluginProcessMain.CHECK_STAGE1_DELAY);
 
         // 兼容即将废弃的p-n方案 by Jiongxuan Zhang
         mAll = new Builder.PxAll();
@@ -284,8 +297,6 @@ class PmBase {
                 LogRelease.e(PLUGIN_TAG, "lst.p: " + e.getMessage(), e);
             }
         }
-
-
     }
 
     /**
@@ -297,6 +308,17 @@ class PmBase {
             LogDebug.d(PLUGIN_TAG, "list plugins from persistent process");
         }
 
+        // 1. 先尝试连接
+        PluginProcessMain.connectToHostSvc();
+
+        // 2. 然后从常驻进程获取插件列表
+        refreshPluginsFromHostSvc();
+    }
+
+    /**
+     * 从HostSvc（插件管理所在进程）获取所有的插件信息
+     */
+    private void refreshPluginsFromHostSvc() {
         List<PluginInfo> plugins = null;
         try {
             plugins = PluginProcessMain.getPluginHost().listPlugins();
@@ -354,7 +376,17 @@ class PmBase {
             return;
         }
         for (PluginInfo info : plugins) {
-            mPlugins.put(info.getName(), Plugin.build(info));
+            Plugin plugin = Plugin.build(info);
+            putPluginObject(info, plugin);
+        }
+    }
+
+    private void putPluginObject(PluginInfo info, Plugin plugin) {
+        // 同时加入PackageName和Alias（如有）
+        mPlugins.put(info.getPackageName(), plugin);
+        if (!TextUtils.isEmpty(info.getAlias())) {
+            // 即便Alias和包名相同也可以再Put一次，反正只是覆盖了相同Value而已
+            mPlugins.put(info.getAlias(), plugin);
         }
     }
 
@@ -452,6 +484,10 @@ class PmBase {
         return false;
     }
 
+    final void removeDynamicClass(String className) {
+        mDynamicClasses.remove(className);
+    }
+
     /**
      * 返回 className 对应的 插件名称
      *
@@ -545,9 +581,8 @@ class PmBase {
         if (!IPC.isPersistentProcess()) {
             // 由于常驻进程已经在内部做了相关的处理，此处仅需要在UI进程注册并更新即可
             registerReceiverAction(ACTION_NEW_PLUGIN);
+            registerReceiverAction(ACTION_UNINSTALL_PLUGIN);
         }
-        // 由于常驻进程内未做处理，因此需要在常驻和UI进程同时注册并更新缓存信息
-        registerReceiverAction(ACTION_UNINSTALL_PLUGIN);
     }
 
     /**
@@ -985,31 +1020,17 @@ class PmBase {
         return mPlugins.get(plugin);
     }
 
-    // 是否为新的，或已经更新过的插件
-    // 注意：若“插件正在运行”时触发更新，则这里应返回false，这样外界将不会发送“新插件”广播
-    final boolean isNewOrUpdatedPlugin(PluginInfo info) {
-        Plugin p = mPlugins.get(info.getName());
-
-        // 满足三个条件的其一就表示为"新插件"，可以做下一步处理
-        // 1. p为空，表示为全新插件
-        // 2. 要安装的版本比当前的要高，且未运行
-        // 3. "待定更新"插件（插件未运行）
-        return p == null ||
-                (p.mInfo.getVersionValue() < info.getVersionValue() && !RePlugin.isPluginRunning(p.mInfo.getName())) ||
-                (info.getPendingUpdate() != null && RePlugin.isPluginRunning(info.getName()));
-    }
-
-    final Plugin loadPackageInfoPlugin(String plugin, IPluginManager pm) {
+    final Plugin loadPackageInfoPlugin(String plugin, PluginCommImpl pm) {
         Plugin p = Plugin.cloneAndReattach(mContext, mPlugins.get(plugin), mClassLoader, pm);
         return loadPlugin(p, Plugin.LOAD_INFO, true);
     }
 
-    final Plugin loadResourcePlugin(String plugin, IPluginManager pm) {
+    final Plugin loadResourcePlugin(String plugin, PluginCommImpl pm) {
         Plugin p = Plugin.cloneAndReattach(mContext, mPlugins.get(plugin), mClassLoader, pm);
         return loadPlugin(p, Plugin.LOAD_RESOURCES, true);
     }
 
-    final Plugin loadDexPlugin(String plugin, IPluginManager pm) {
+    final Plugin loadDexPlugin(String plugin, PluginCommImpl pm) {
         Plugin p = Plugin.cloneAndReattach(mContext, mPlugins.get(plugin), mClassLoader, pm);
         return loadPlugin(p, Plugin.LOAD_DEX, true);
     }
@@ -1019,7 +1040,7 @@ class PmBase {
     }
 
     // 底层接口
-    final Plugin loadPlugin(PluginInfo pi, IPluginManager pm, int loadType, boolean useCache) {
+    final Plugin loadPlugin(PluginInfo pi, PluginCommImpl pm, int loadType, boolean useCache) {
         Plugin p = Plugin.build(pi);
         p.attach(mContext, mClassLoader, pm);
         return loadPlugin(p, loadType, useCache);
@@ -1085,7 +1106,9 @@ class PmBase {
             }
             Plugin plugin = Plugin.build(info);
             plugin.attach(mContext, mClassLoader, mLocal);
-            mPlugins.put(info.getName(), plugin);
+
+            // 同时加入PackageName和Alias（如有）
+            putPluginObject(info, plugin);
         }
     }
 
@@ -1119,6 +1142,11 @@ class PmBase {
     final void pluginUninstalled(PluginInfo info) {
         if (LOG) {
             LogDebug.d(PLUGIN_TAG, "Clear plugin cache. pn=" + info.getName());
+        }
+
+        // 移除卸载插件的HashMap缓存
+        if (mPlugins.containsKey(info.getName())) {
+            mPlugins.remove(info.getName());
         }
 
         // 移除卸载插件表快照

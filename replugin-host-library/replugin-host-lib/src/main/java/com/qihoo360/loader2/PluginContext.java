@@ -24,20 +24,16 @@ import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.res.AssetManager;
 import android.content.res.Resources;
-import android.os.Build;
 import android.os.Bundle;
 import android.util.AttributeSet;
 import android.view.ContextThemeWrapper;
-import android.view.Display;
 import android.view.InflateException;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.ViewStub;
-import android.view.WindowManager;
 
+import com.qihoo360.i.Factory2;
 import com.qihoo360.loader.utils2.FilePermissionUtils;
-import com.qihoo360.mobilesafe.core.BuildConfig;
 import com.qihoo360.replugin.ContextInjector;
 import com.qihoo360.replugin.RePlugin;
 import com.qihoo360.replugin.component.service.PluginServiceClient;
@@ -136,66 +132,7 @@ public class PluginContext extends ContextThemeWrapper {
             }
             return mInflater;
         }
-        if (BuildConfig.DEBUG && Build.VERSION.SDK_INT < 24) {
-            if (WINDOW_SERVICE.equals(name)) {
-                return new WmWrapper((WindowManager) super.getSystemService(name));
-            }
-        }
         return super.getSystemService(name);
-    }
-
-    /**
-     * 调试类
-     */
-    public static class WmWrapper implements WindowManager {
-
-        WindowManager wm;
-
-        public WmWrapper(WindowManager wm) {
-            this.wm = wm;
-        }
-
-        @Override
-        public void updateViewLayout(View view, ViewGroup.LayoutParams params) {
-            if (LOGR) {
-                // 混淆后，getPackage() 可能返回 null。
-                LogRelease.i(PLUGIN_TAG, "WMR updateViewLayout view=" + view + " getPackage=" + view.getClass().getSimpleName());
-                LogRelease.i(PLUGIN_TAG, "WMR " + view.getClass().getClassLoader());
-            }
-            wm.updateViewLayout(view, params);
-        }
-
-        @Override
-        public void removeView(View view) {
-            if (LOGR) {
-                LogRelease.i(PLUGIN_TAG, "WMR removeView view=" + view + " getPackage=" + view.getClass().getSimpleName());
-                LogRelease.i(PLUGIN_TAG, "WMR " + view.getClass().getClassLoader());
-            }
-            wm.removeView(view);
-        }
-
-        @Override
-        public void addView(View view, ViewGroup.LayoutParams params) {
-            if (LOGR) {
-                LogRelease.i(PLUGIN_TAG, "WMR addView view=" + view + " getPackage=" + view.getClass().getSimpleName());
-                LogRelease.i(PLUGIN_TAG, "WMR " + view.getClass().getClassLoader());
-            }
-            wm.addView(view, params);
-        }
-
-        @Override
-        public void removeViewImmediate(View view) {
-            if (LOGR) {
-                LogRelease.i(PLUGIN_TAG, "WMR removeViewImmediate view=" + view + " getPackage=" + view.getClass().getSimpleName());
-                LogRelease.i(PLUGIN_TAG, "WMR " + view.getClass().getClassLoader());
-            }
-            wm.removeViewImmediate(view);
-        }
-
-        @Override
-        public Display getDefaultDisplay() {
-            return wm.getDefaultDisplay();
-        }
     }
 
     @Override
@@ -346,15 +283,14 @@ public class PluginContext extends ContextThemeWrapper {
     /**
      * 设置文件的访问权限
      *
-     * @param name 需要被设置访问权限的文件
-     * @param mode 文件操作模式
+     * @param name             需要被设置访问权限的文件
+     * @param mode             文件操作模式
      * @param extraPermissions 文件访问权限
-     *
-     * 注意： <p>
-     * 此部分经由360安全部门审核后，在所有者|同组用户|其他用户三部分的权限设置中，认为在其他用户的权限设置存在一定的安全风险 <p>
-     * 目前暂且忽略传入的文件操作模式参数，并移除了允许其他用户的读写权限的操作 <p>
-     * 对于文件操作模式以及其他用户访问权限的设置，开发者可自行评估 <p>
-     *
+     *                         <p>
+     *                         注意： <p>
+     *                         此部分经由360安全部门审核后，在所有者|同组用户|其他用户三部分的权限设置中，认为在其他用户的权限设置存在一定的安全风险 <p>
+     *                         目前暂且忽略传入的文件操作模式参数，并移除了允许其他用户的读写权限的操作 <p>
+     *                         对于文件操作模式以及其他用户访问权限的设置，开发者可自行评估 <p>
      * @return
      */
     private final void setFilePermissionsFromMode(String name, int mode, int extraPermissions) {
@@ -506,33 +442,51 @@ public class PluginContext extends ContextThemeWrapper {
         // 直接获取插件的Application对象
         // NOTE 切勿获取mLoader.mPkgContext，因为里面的一些方法会调用getApplicationContext（如registerComponentCallback）
         // NOTE 这样会造成StackOverflow异常。所以只能获取Application对象（框架版本为3以上的会创建此对象）
-        return mLoader.mPluginObj.mApplicationClient.getObj();
+        //entry中调用context.getApplicationContext时mApplicationClient还没被赋值，会导致空指针造成插件安装失败
+        if (mLoader.mPluginObj.mApplicationClient == null) {
+            return this;
+        } else {
+            return mLoader.mPluginObj.mApplicationClient.getObj();
+        }
     }
 
 
     @Override
     public void startActivity(Intent intent) {
-        if (mContextInjector != null) {
-            mContextInjector.startActivityBefore(intent);
-        }
+        // HINT 只有插件Application才会走这里
+        // 而Activity.startActivity系统最终会走startActivityForResult，不会走这儿
 
-        super.startActivity(intent);
+        // 这里会被调用两次：
+        // 第一次：获取各种信息，最终确认坑位，并走startActivity，再次回到这里
+        // 第二次：判断要打开的是“坑位Activity”，则返回False，直接走super，后面的事情你们都懂的
+        // 当然，如果在获取坑位信息时遇到任何情况（例如要打开的是宿主的Activity），则直接返回false，走super
+        if (!Factory2.startActivity(this, intent)) {
+            if (mContextInjector != null) {
+                mContextInjector.startActivityBefore(intent);
+            }
 
-        if (mContextInjector != null) {
-            mContextInjector.startActivityAfter(intent);
+            super.startActivity(intent);
+
+            if (mContextInjector != null) {
+                mContextInjector.startActivityAfter(intent);
+            }
         }
     }
 
     @Override
     public void startActivity(Intent intent, Bundle options) {
-        if (mContextInjector != null) {
-            mContextInjector.startActivityBefore(intent, options);
-        }
+        // HINT 保险起见，startActivity写两套相似逻辑
+        // 具体见startActivity(intent)的描述（上面）
+        if (!Factory2.startActivity(this, intent)) {
+            if (mContextInjector != null) {
+                mContextInjector.startActivityBefore(intent, options);
+            }
 
-        super.startActivity(intent, options);
+            super.startActivity(intent, options);
 
-        if (mContextInjector != null) {
-            mContextInjector.startActivityAfter(intent, options);
+            if (mContextInjector != null) {
+                mContextInjector.startActivityAfter(intent, options);
+            }
         }
     }
 

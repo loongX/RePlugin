@@ -16,6 +16,7 @@
 
 package com.qihoo360.i;
 
+import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -24,9 +25,11 @@ import android.content.pm.PackageInfo;
 import android.content.pm.ServiceInfo;
 import android.content.res.Resources;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.text.TextUtils;
 
+import com.qihoo360.loader2.PluginCommImpl;
 import com.qihoo360.mobilesafe.core.BuildConfig;
 import com.qihoo360.replugin.RePlugin;
 import com.qihoo360.replugin.component.ComponentList;
@@ -116,7 +119,7 @@ public final class Factory {
     /**
      * 参数1：插件上下文，可通过它获取应用上下文
      * 参数2：HOST的类加载器
-     * 参数3：插件管理器 IPluginManager.aidl
+     * 参数3：已废弃
      * 返回：插件 IPlugin.aidl
      * @hide 内部框架使用
      */
@@ -127,7 +130,7 @@ public final class Factory {
     /**
      * @hide 内部框架使用
      */
-    public static IPluginManager sPluginManager;
+    public static PluginCommImpl sPluginManager;
 
     /**
      * @deprecated 新插件框架不再用i接口依赖，此接口已废弃
@@ -385,5 +388,18 @@ public final class Factory {
      */
     public static final String fetchPluginName(ClassLoader cl) {
         return sPluginManager.fetchPluginName(cl);
+    }
+
+    /**
+     * 通过 forResult 方式启动一个插件的 Activity
+     *
+     * @param activity    源 Activity
+     * @param intent      要打开 Activity 的 Intent，其中 ComponentName 的 Key 必须为插件名
+     * @param requestCode 请求码
+     * @param options     附加的数据
+     * @since 2.1.3
+     */
+    public static boolean startActivityForResult(Activity activity, Intent intent, int requestCode, Bundle options) {
+        return sPluginManager.startActivityForResult(activity, intent, requestCode, options);
     }
 }

@@ -40,15 +40,13 @@ public final class RePluginConfig {
     private RePluginEventCallbacks eventCallbacks;
 
     private File pnInstallDir;
-    private boolean verifySign = true;
+    private boolean verifySign = false;
     private boolean persistentEnable = true;
-    private String persistentName = RePluginConstants.PERSISTENT_NAME_DEFAULT;
+
     private boolean useHostClassIfNotFound = false;
     private boolean moveFileWhenInstalling = true;
     private boolean printDetailLog = false;
     private int defaultFrameworkVersion = 4;
-    private String appID;
-    private String channel;
 
     /**
      * 获取插件回调方法。通常无需调用此方法。
@@ -130,8 +128,9 @@ public final class RePluginConfig {
     }
 
     /**
-     * 设置插件是否开启签名校验 <p>
-     * 注意：该功能仅针对“纯APK”插件，“p-n”插件已默认开启了签名校验
+     * 设置插件是否开启签名校验。默认为False。但强烈建议开启此开关。 <p>
+     * 此开关将必须和 RePlugin.addCertSignature 配合使用。<p>
+     * 注意：该功能仅针对“纯APK”插件
      *
      * @param verifySign
      * @return RePluginConfig自己。这样可以连环调用set方法
@@ -141,55 +140,6 @@ public final class RePluginConfig {
             return this;
         }
         this.verifySign = verifySign;
-        return this;
-    }
-
-    /**
-     * 是否开启"双进程"模式？
-     *
-     * @return 是否开启
-     */
-    public boolean isPersistentEnable() {
-        return persistentEnable;
-    }
-
-    /**
-     * 设置是否允许开启"双进程"模式，开启后会极大的提升插件加载和获取的性能 <p>
-     * TODO 尚不支持单进程模式，在以后会开发
-     *
-     * @param persistentEnable 是否开启
-     * @return RePluginConfig自己。这样可以连环调用set方法
-     */
-    public RePluginConfig setPersistentEnable(boolean persistentEnable) {
-        if (!checkAllowModify()) {
-            return this;
-        }
-        this.persistentEnable = persistentEnable;
-        return this;
-    }
-
-    /**
-     * 获取"常驻进程的名称"，通常无需调用此方法，而是调用RePlugin.getPersistentName即可。 <p>
-     * 注意：这里和RePlugin.getPersistentName方法不同，前者是获取"用户设置的"常驻进程名，后者是最终确认的常驻进程名
-     *
-     * @return 常驻进程名
-     */
-    public String getPersistentName() {
-        return persistentName;
-    }
-
-    /**
-     * 设置常驻进程名。请参见replugin.gradle文件以了解更多信息 <p>
-     * 注意：除非用默认名（:GuardService），否则在replugin.gradle修改了常驻进程名后，请必须再调用此方法
-     *
-     * @param persistentName 常驻进程名
-     * @return RePluginConfig自己。这样可以连环调用set方法
-     */
-    public RePluginConfig setPersistentName(String persistentName) {
-        if (!checkAllowModify()) {
-            return this;
-        }
-        this.persistentName = persistentName;
         return this;
     }
 
@@ -297,56 +247,6 @@ public final class RePluginConfig {
         return this;
     }
 
-    /**
-     * 获取 AppID
-     *
-     * @return AppID
-     * @since 1.3.6
-     */
-    public String getAppID() {
-        return appID;
-    }
-
-    /**
-     * 设置 AppID
-     *
-     * @param appId AppID
-     * @return RePluginConfig自己。这样可以连环调用set方法
-     * @since 1.3.6
-     */
-    public RePluginConfig setAppID(String appID) {
-        if (!checkAllowModify()) {
-            return this;
-        }
-        this.appID = appID;
-        return this;
-    }
-
-    /**
-     * 获取Channel（渠道信息）
-     *
-     * @return Channel
-     * @since 1.3.6
-     */
-    public String getChannel() {
-        return channel;
-    }
-
-    /**
-     * 设置Channel（渠道信息）
-     *
-     * @param channel Channel
-     * @return RePluginConfig自己。这样可以连环调用set方法
-     * @since 1.3.6
-     */
-    public RePluginConfig setChannel(String channel) {
-        if (!checkAllowModify()) {
-            return this;
-        }
-        this.channel = channel;
-        return this;
-    }
-
     // 针对RePlugin.App.AttachBaseContext的调用，初始化默认值
     void initDefaults(Context context) {
         if (pnInstallDir == null) {
@@ -354,11 +254,11 @@ public final class RePluginConfig {
         }
 
         if (callbacks == null) {
-            callbacks = new DefaultRePluginCallbacks(context);
+            callbacks = new RePluginCallbacks(context);
         }
 
         if (eventCallbacks == null) {
-            eventCallbacks = new DefaultRePluginEventCallbacks(context);
+            eventCallbacks = new RePluginEventCallbacks(context);
         }
     }
 

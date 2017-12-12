@@ -23,7 +23,7 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.IBinder;
 
-import com.qihoo360.mobilesafe.utils.basic.ArrayMap;
+import com.qihoo360.replugin.utils.basic.ArrayMap;
 
 import java.util.ArrayList;
 
@@ -53,6 +53,9 @@ class ServiceRecord {
 
     // Service对象
     Service service;
+
+    // 替当前 "插件服务" 在AMS中占坑的组件
+    ComponentName pitComponentName;
 
     // 是否调用过startService且没有停止
     boolean startRequested;
@@ -108,5 +111,17 @@ class ServiceRecord {
     @Override
     public String toString() {
         return "[srv=" + service.getClass().getName() + "; startRequested=" + startRequested + "; bindings=(" + bindings.size() + ") " + bindings + "]";
+    }
+
+    public String getPlugin() {
+        return plugin;
+    }
+
+    public ComponentName getPitComponentName() {
+        return pitComponentName;
+    }
+
+    public ServiceInfo getServiceInfo() {
+        return serviceInfo;
     }
 }
